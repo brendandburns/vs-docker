@@ -11,13 +11,22 @@
         "Other"
     ],
     "activationEvents": [
-        "onCommand:extension.sayHello"
+        "workspaceContains:Dockerfile"        
     ],
     "main": "./extension",
     "contributes": {
         "commands": [{
-            "command": "extension.sayHello",
-            "title": "Hello World"
+            "command": "extension.vsDockerBuild",
+            "title": "Docker Build"
+        },{
+            "command": "extension.vsDockerRun",
+            "title": "Docker Run"
+        },{
+            "command": "extension.vsDockerFind",
+            "title": "Docker Find"
+        },{
+            "command": "extension.vsDockerKill",
+            "title": "Docker Stop"
         }]
     },
     "scripts": {
