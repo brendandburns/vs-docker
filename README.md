@@ -11,9 +11,10 @@ Currently the extension provides four commands:
    * Docker Build - Builds the Docker image from the Dockerfile.  The name that it gives the image is the
     name of the top-level directory.  For example if you have opened the directory `/home/user/my-project`,
     the name of the image will be `my-project`.
+   * Docker Push - Pushes the current image out to a registry.
    * Docker Run - Runs the image that is built for the current project.
-   * Docker Find - Finds any running containers for the project.
    * Docker Stop - Stops the container that is running for this project.
+   * Docker Find - Finds any running containers for the project.
 
 ## Requirements
 
@@ -29,6 +30,7 @@ settings only make sense in the context of a workspace.
 
 ### Workspace settings
    * `vsdocker.registry`: The registry for images that are built. Default is Docker Hub.
+   * `vsdocker.imageUser`: The user to use for image build/run/push. Default is empty.
    * `vsdocker.imageName`: The name of the image to build/run/push. Default is the current root directory for the workspace.
    * `vsdocker.imageVersion`: The version of the image to build/run/push. Default is the current git commit (+ `-dirty` if there are uncommited changes).  If
 the workspace is not under git, then `latest` is used.
