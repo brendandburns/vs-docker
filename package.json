@@ -24,6 +24,11 @@
                     "default": null,
                     "description": "The registry for image build/push.  Default empty (== Docker Hub)"
                 },
+                "vsdocker.imageUser": {
+                    "type": ["string", "null"],
+                    "default": null,
+                    "description": "The user to use in the image that is built. Default empty (== ${USER})"
+                },
                 "vsdocker.imageName": {
                     "type": ["string", "null"],
                     "default": null,

@@ -82,6 +82,10 @@ function findBaseName() {
     if (!image) {
         image = path.basename(vscode.workspace.rootPath);
     }
+    var user = config.get("vsdocker.imageUser", null);
+    if (user) {
+        image = user + '/' + image;
+    }
     var registry = config.get("vsdocker.registry", null);
     if (registry) {
         image = registry + "/" + image;
