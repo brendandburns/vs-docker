@@ -2,6 +2,8 @@
 // Import the module and reference it with the alias vscode in your code below
 var vscode = require('vscode');
 var path = require('path');
+var fs = require('fs');
+var shelljs = require('shelljs');
 
 var dockerClientLib = null;
 var client = function () {
@@ -55,8 +57,6 @@ function buildImage(name, dir) {
 // this method is called when your extension is activated
 // your extension is activated the very first time the command is executed
 function activate(context) {
-    console.log('Congratulations, your extension "vs-docker" is now active!');
-
     var disposable = vscode.commands.registerCommand('extension.vsDockerBuild', vsDockerBuild);
     context.subscriptions.push(disposable);
 
@@ -76,8 +76,55 @@ function deactivate() {
 }
 exports.deactivate = deactivate;
 
+function findBaseName() {
+    var config = vscode.workspace.getConfiguration();
+    var image = config.get("vsdocker.imageName", null);
+    if (!image) {
+        image = path.basename(vscode.workspace.rootPath);
+    }
+    var registry = config.get("vsdocker.registry", null);
+    if (registry) {
+        image = registry + "/" + image;
+    }
+    return image;
+}
+
+function findVersion() {
+    // User supplied override
+    var version = vscode.workspace.getConfiguration().get("vsdocker.imageVersion", null);
+    if (version) {
+        return version;
+    }
+    // No .git dir, use 'latest'
+    // TODO: use 'git rev-parse' to detect upstream directories
+    if (!fs.existsSync(path.join(vscode.workspace.rootPath, ".git"))) {
+        return 'latest';
+    }
+
+    var result = shelljs.exec('git log --pretty=format:\'%h\' -n 1');
+    if (result.code != 0) {
+        vscode.window.showErrorMessage('git log returned: ' + result.code);
+        return 'error';
+    }
+    version = result.stdout;
+
+    result = shelljs.exec('git status --porcelain', { cwd: vscode.workspace.rootPath});
+    if (result.code != 0) {
+        vscode.window.showErrorMessage('git status returned: ' + result.code);
+        return 'error';
+    }
+    if (result.stdout != '') {
+        version += '-dirty';
+    }
+    return version;
+}
+
+function findImageName() {
+    return findBaseName() + ':' + findVersion();
+}
+
 function vsDockerBuild() {
-    var name = path.basename(vscode.workspace.rootPath);
+    var name = findImageName();
     vscode.window.showInformationMessage("Starting to build " + name);
     buildImage(name, vscode.workspace.rootPath).then(function (success, obj) {
         if (success) {
@@ -89,11 +136,31 @@ function vsDockerBuild() {
 };
 
 function vsDockerRun() {
-    var name = path.basename(vscode.workspace.rootPath);
+    var name = findImageName();
+    findContainer(name).then(function(container) {
+        if (container) {
+            vscode.window.showWarningMessage("A container is already running. Do you wish to restart?", "Restart").then(
+                function(msg) {
+                    if (msg == "Restart") {
+                        client().getContainer(container.Id).stop(function(err, data) {
+                            if (err) {
+                                vscode.window.showErrorMessage("Failed to stop container: " + err);
+                                return;
+                            }
+                            runImageWithNotifications(name);
+                        });
+                    }
+                });
+            return;
+        }
+        runImageWithNotifications(name);
+    });
+};
+
+function runImageWithNotifications(name) {
     runImage(name).then(function(success, obj) {
         if (success) {
             vscode.window.showInformationMessage("Container running.");
-            console.log(obj);
         } else {
             vscode.window.showErrorMessage("Failed to run container: " + obj);
         }
@@ -121,7 +188,7 @@ function runImage(name) {
 };
 
 function vsDockerFind() {
-    var name = path.basename(vscode.workspace.rootPath);
+    var name = findImageName();
     findContainer(name).then(function(container) {
         if (container) {
             vscode.window.showInformationMessage("Found container: " + container.Id);
@@ -147,7 +214,7 @@ function findContainer(name) {
 };
 
 function vsDockerKill() {
-    var name = path.basename(vscode.workspace.rootPath);
+    var name = findImageName();
     findContainer(name).then(function(container) {
         if (container) {
             client().getContainer(container.Id).stop(function(err, data) {

@@ -15,6 +15,27 @@
     ],
     "main": "./extension",
     "contributes": {
+        "configuration": {
+            "type": "object",
+            "title": "vs-docker configuration",
+            "properties": {
+                "vsdocker.registry": {
+                    "type": ["string", "null"],
+                    "default": null,
+                    "description": "The registry for image build/push.  Default empty (== Docker Hub)"
+                },
+                "vsdocker.imageName": {
+                    "type": ["string", "null"],
+                    "default": null,
+                    "description": "The name of the image to build. Default empty (== parent directory name)"
+                },
+                "vsdocker.imageVersion": {
+                    "type": ["string", "null"],
+                    "default": null,
+                    "description": "The version for the image to build. Default empty (== git hash)"
+                }
+            }
+        },
         "commands": [{
             "command": "extension.vsDockerBuild",
             "title": "Docker Build"

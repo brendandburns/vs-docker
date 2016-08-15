@@ -1,65 +1,46 @@
 # vs-docker README
 
-This is the README for your extension "vs-docker". After writing up a brief description, we recommend including the following sections.
+This is a simple Visual Studio Code extension that knows how to interact with the Docker daemon to
+build and run Docker files.
+
+If you open a folder with a Dockerfile in the top level directory, the extension will be activated.
 
 ## Features
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
-
-For example if there is an image subfolder under your extension project workspace:
-
-\!\[feature X\]\(images/feature-x.png\)
-
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+Currently the extension provides four commands:
+   * Docker Build - Builds the Docker image from the Dockerfile.  The name that it gives the image is the
+    name of the top-level directory.  For example if you have opened the directory `/home/user/my-project`,
+    the name of the image will be `my-project`.
+   * Docker Run - Runs the image that is built for the current project.
+   * Docker Find - Finds any running containers for the project.
+   * Docker Stop - Stops the container that is running for this project.
 
 ## Requirements
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+You need to have the Docker daemon installed and working for your user (e.g. `docker ps` needs to work)
 
 ## Extension Settings
+All settings can be set globally or in a specific workspace, though most
+settings only make sense in the context of a workspace.
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+### Global settings
 
-For example:
+   * `vsdocker.registry`: The registry for images that are built. Default is Docker Hub.
 
-This extension contributes the following settings:
-
-* `myExtension.enable`: enable/disable this extension
-* `myExtension.thing`: set to `blah` to do something
+### Workspace settings
+   * `vsdocker.registry`: The registry for images that are built. Default is Docker Hub.
+   * `vsdocker.imageName`: The name of the image to build/run/push. Default is the current root directory for the workspace.
+   * `vsdocker.imageVersion`: The version of the image to build/run/push. Default is the current git commit (+ `-dirty` if there are uncommited changes).  If
+the workspace is not under git, then `latest` is used.
 
 ## Known Issues
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+Still alpha and incomplete, please file bugs and feature requests!
 
 ## Release Notes
 
-Users appreciate release notes as you update your extension.
+### 0.0.1
 
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
-
------------------------------------------------------------------------------------------------------------
-
-## Working with Markdown
-
-**Note:** You can author your README using Visual Studio Code.  Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on OSX or `Ctrl+\` on Windows and Linux)
-* Toggle preview (`Shift+CMD+V` on OSX or `Shift+Ctrl+V` on Windows and Linux)
-* Press `Ctrl+Space` (Windows, Linux) or `Cmd+Space` (OSX) to see a list of Markdown snippets
-
-### For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
+Initial release of vs-docker
 
 **Enjoy!**
