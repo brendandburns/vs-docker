@@ -24,6 +24,11 @@
                     "default": null,
                     "description": "The registry for image build/push.  Default empty (== Docker Hub)"
                 },
+                "vsdocker.authconfig": {
+                    "type": ["string", "null"],
+                    "default": null,
+                    "description": "Path to authconfig for pushing to the registry"
+                },
                 "vsdocker.imageUser": {
                     "type": ["string", "null"],
                     "default": null,
@@ -53,6 +58,9 @@
         },{
             "command": "extension.vsDockerKill",
             "title": "Docker Stop"
+        },{
+            "command": "extension.vsDockerPush",
+            "title": "Docker Push"
         }]
     },
     "scripts": {

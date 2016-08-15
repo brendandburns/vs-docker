@@ -68,6 +68,9 @@ function activate(context) {
 
     disposable = vscode.commands.registerCommand('extension.vsDockerKill', vsDockerKill);
     context.subscriptions.push(disposable);
+
+    disposable = vscode.commands.registerCommand('extension.vsDockerPush', vsDockerPush);
+    context.subscriptions.push(disposable);
 }
 exports.activate = activate;
 
@@ -75,6 +78,10 @@ exports.activate = activate;
 function deactivate() {
 }
 exports.deactivate = deactivate;
+
+function getRegistry() {
+    return vscode.workspace.getConfiguration().get("vsdocker.registry", null);
+}
 
 function findBaseName() {
     var config = vscode.workspace.getConfiguration();
@@ -86,7 +93,7 @@ function findBaseName() {
     if (user) {
         image = user + '/' + image;
     }
-    var registry = config.get("vsdocker.registry", null);
+    var registry = getRegistry();
     if (registry) {
         image = registry + "/" + image;
     }
@@ -231,3 +238,58 @@ function vsDockerKill() {
         }
     });
 };
+
+function vsDockerPush() {
+    vscode.window.showInformationMessage('Starting image push...');
+    var name = findImageName();
+    shelljs.exec('docker push ' + name, function(result, stdout, stderr) {
+        if (result != 0) {
+            vscode.window.showErrorMessage('Docker push failed: ' + stderr);
+            console.log(stderr);
+        } else {
+            vscode.window.showInformationMessage('Image ' + name + ' pushed successfully.');
+        }
+    });
+}
+
+// This doesn't quite work...
+function vsDockerPushNative() {
+    var authconfig = vscode.workspace.getConfiguration().get('vsdocker.authconfig');
+    var auth = null;
+    if (!authconfig) {
+        vscode.window.showWarningMessage('vsdocker.authconfig setting is undefined, this push will be unauthenticated.');
+    } else {
+        auth = JSON.parse(fs.readFileSync(authconfig));
+    }
+
+    var registry = getRegistry();
+    if (!registry) {
+        registry = 'index.docker.io:5000';
+    }
+    var name = findImageName();
+    var img = client().getImage(name);
+    img.push({
+        'registry': registry
+    },
+    function(err, output) {
+        if (err) {
+            vscode.window.showErrorMessage('Failed to push image: ' + err);
+            return;
+        }
+        var status = true;
+        output.on('data', function (chunk) {
+            obj = JSON.parse(chunk);
+            if (obj.errorDetail) {
+                status = false;
+                vscode.window.showErrorMessage('Image push failed: ' + obj.errorDetail.message);
+            }
+        });
+        // TODO: handle 'errorDetail messages here?'
+        output.on('end', function() {
+            if (status) {
+                vscode.window.showInformationMessage('Successfully pushed image ' + name);
+            }
+        });
+    },
+    auth);
+}
