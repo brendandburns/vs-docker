@@ -10,7 +10,9 @@ var client = function () {
     if (dockerClientLib == null) {
         var docker = require('dockerode');
         dockerClientLib = new docker({
-            socketPath: '/var/run/docker.sock'
+            //socketPath: '/var/run/docker.sock'
+            host: '127.0.0.1',
+            port: 2375
         });
     }
     return dockerClientLib;
@@ -24,6 +26,8 @@ var tar = function () {
     return tarLib;
 }
 
+var dockerparse = require('dockerfile-parse');
+
 function buildImage(name, dir) {
     return {
         'then': function (fn) {
@@ -32,12 +36,16 @@ function buildImage(name, dir) {
                 't': name
             }, function (err, output) {
                 if (err) {
-                    fn(false);
+                    fn(false, null);
                 } else {
                     var status = true;
                     var obj = null;
                     output.on('data', function (chunk) {
-                        obj = JSON.parse(chunk);
+                        try {
+                            obj = JSON.parse(chunk);
+                        } catch (ex) {
+                            console.log(chunk);    
+                        }
                         if (obj.errorDetail) {
                             status = false;
                         }
@@ -134,20 +142,30 @@ function findImageName() {
     return findBaseName() + ':' + findVersion();
 }
 
-function vsDockerBuild() {
+function vsDockerBuild(fn) {
     var name = findImageName();
     vscode.window.showInformationMessage("Starting to build " + name);
     buildImage(name, vscode.workspace.rootPath).then(function (success, obj) {
         if (success) {
             vscode.window.showInformationMessage("Build succeeded");
-        } else {
+            if (fn) {
+                fn();
+            }
+        } else if (obj && obj.errorDetail) {
             vscode.window.showErrorMessage("Build failed: " + obj.errorDetail.message);
+        } else {
+            vscode.window.showErrorMessage("A build error occurred");
         }
     });
 };
 
 function vsDockerRun() {
     var name = findImageName();
+    var dockerFilePath = path.join(vscode.workspace.rootPath, "Dockerfile");
+    var dockerFileData = fs.readFileSync(dockerFilePath).toString();
+    console.log(dockerFileData);
+    var dockerFileObj = dockerparse(dockerFileData);
+
     findContainer(name).then(function(container) {
         if (container) {
             vscode.window.showWarningMessage("A container is already running. Do you wish to restart?", "Restart").then(
@@ -158,18 +176,22 @@ function vsDockerRun() {
                                 vscode.window.showErrorMessage("Failed to stop container: " + err);
                                 return;
                             }
-                            runImageWithNotifications(name);
+                            vsDockerBuild(function() {
+                                runImageWithNotifications(name, dockerFileObj.expose);
+                            });
                         });
                     }
                 });
             return;
         }
-        runImageWithNotifications(name);
+        vsDockerBuild(function() {
+            runImageWithNotifications(name, dockerFileObj.expose);
+        });
     });
 };
 
-function runImageWithNotifications(name) {
-    runImage(name).then(function(success, obj) {
+function runImageWithNotifications(name, ports) {
+    runImage(name, ports).then(function(success, obj) {
         if (success) {
             vscode.window.showInformationMessage("Container running.");
         } else {
@@ -178,10 +200,28 @@ function runImageWithNotifications(name) {
     });
 };
 
-function runImage(name) {
+function runImage(name, ports) {
+    var exposed = {};
+    var bindings = {};
+
+    if (ports) {
+        ports.forEach(function(port) {
+            var portStr = port + "";
+            var fullPort = portStr + "/tcp";
+            exposed[fullPort] = {};
+            bindings[fullPort] = [{ "HostPort": portStr}];
+        });
+    }
+
     return {
         'then': function(fn) {
-            client().createContainer({Image: name}, function (err, container) {
+            client().createContainer({
+                Image: name,
+                ExposedPorts: exposed,
+                HostConfig: {
+                    "PortBindings": bindings
+                }
+            }, function (err, container) {
                 if (err) {
                     fn(false, err);
                 } else {
@@ -212,12 +252,14 @@ function findContainer(name) {
         'then': function(fn) {
             client().listContainers(function (err, containers) {
                 var result = null;
-                containers.forEach(function (info) {
-                    console.log(info);
-                    if (info.Image == name) {
-                        result = info;
-                    }
-                });
+                if (containers != null) {
+                    containers.forEach(function (info) {
+                        console.log(info);
+                        if (info.Image == name) {
+                            result = info;
+                        }
+                    });
+                }
                 fn(result);
             });
         }
