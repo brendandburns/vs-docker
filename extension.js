@@ -28,7 +28,9 @@ var tar = function () {
 
 var dockerparse = require('dockerfile-parse');
 
-function buildImage(name, dir) {
+var stream = require('stream');
+
+function buildImage(name, dir, outputFn) {
     return {
         'then': function (fn) {
             var tarStream = tar().pack(dir);
@@ -43,10 +45,14 @@ function buildImage(name, dir) {
                     output.on('data', function (chunk) {
                         try {
                             obj = JSON.parse(chunk);
+                            if (outputFn) {
+                                outputFn(obj.stream.toString());
+                            }
                         } catch (ex) {
-                            console.log(chunk);    
+                            console.log(ex);
+                            console.log(chunk.toString());    
                         }
-                        if (obj.errorDetail) {
+                        if (obj && obj.errorDetail) {
                             status = false;
                         }
                     });
@@ -79,6 +85,24 @@ function activate(context) {
 
     disposable = vscode.commands.registerCommand('extension.vsDockerPush', vsDockerPush);
     context.subscriptions.push(disposable);
+
+    disposable = vscode.commands.registerCommand('extension.vsDockerLogs', vsDockerLogs);
+    context.subscriptions.push(disposable);
+
+    disposable = vscode.commands.registerCommand('extension.vsDockerExec', vsDockerExec);
+    context.subscriptions.push(disposable);
+
+    vscode.workspace.onDidSaveTextDocument((event) => {
+        var autorun = vscode.workspace.getConfiguration().get("vsdocker.autorun", "true");
+        if (autorun && autorun == "true") {
+            vsDockerRun(null, {
+                silent: true,
+                autorun: true
+            });
+        } else {
+            vsDockerBuild(null, { silent: true });
+        }
+    });
 }
 exports.activate = activate;
 
@@ -89,6 +113,27 @@ exports.deactivate = deactivate;
 
 function getRegistry() {
     return vscode.workspace.getConfiguration().get("vsdocker.registry", null);
+}
+
+function log(fn, str, ...items) {
+    var args = items[0];
+    if (args && args.length > 0) {
+        console.log(args);
+        return fn(str, ...args);
+    }
+    return fn(str);    
+}
+
+function info(str, ...items) {
+    return log(vscode.window.showInformationMessage, str, items);    
+}
+
+function warn(str, ...items) {
+    return log(vscode.window.showWarningMessage, str, items);
+}
+
+function error(str, ...items) {
+    return log(vscode.window.showErrorMessage, str, items);
 }
 
 function findBaseName() {
@@ -120,16 +165,19 @@ function findVersion() {
         return 'latest';
     }
 
-    var result = shelljs.exec('git log --pretty=format:\'%h\' -n 1');
+    var result = shelljs.exec('git log --pretty=format:\'%h\' -n 1', {
+        'cwd': vscode.workspace.rootPath
+    });
+    var result = shelljs.exec('git rev-parse HEAD')
     if (result.code != 0) {
-        vscode.window.showErrorMessage('git log returned: ' + result.code);
+        error('git log returned: ' + result.code + ' ' + result.stdout);
         return 'error';
     }
     version = result.stdout;
 
     result = shelljs.exec('git status --porcelain', { cwd: vscode.workspace.rootPath});
     if (result.code != 0) {
-        vscode.window.showErrorMessage('git status returned: ' + result.code);
+        error('git status returned: ' + result.code);
         return 'error';
     }
     if (result.stdout != '') {
@@ -142,60 +190,93 @@ function findImageName() {
     return findBaseName() + ':' + findVersion();
 }
 
-function vsDockerBuild(fn) {
+function vsDockerBuild(fn, opts) {
     var name = findImageName();
-    vscode.window.showInformationMessage("Starting to build " + name);
-    buildImage(name, vscode.workspace.rootPath).then(function (success, obj) {
+    if (!opts) {
+        opts = {};
+    }
+    if (!opts.silent) {
+        info("Starting to build " + name);
+    }
+
+    var channelName = "Container Build";
+    if (!opts.silent) {
+        out(channelName).clear();
+        out(channelName).show();
+    }
+    buildImage(name, vscode.workspace.rootPath, function(str) {
+        if (!opts.silent) {
+            out(channelName).append(str);
+        }
+    }).then(function (success, obj) {
         if (success) {
-            vscode.window.showInformationMessage("Build succeeded");
+            if (!opts.silent) {
+                info("Build succeeded");
+            }
             if (fn) {
                 fn();
             }
         } else if (obj && obj.errorDetail) {
-            vscode.window.showErrorMessage("Build failed: " + obj.errorDetail.message);
+            error("Build failed: " + obj.errorDetail.message);
         } else {
-            vscode.window.showErrorMessage("A build error occurred");
+            error("A build error occurred");
         }
     });
 };
 
-function vsDockerRun() {
-    var name = findImageName();
-    var dockerFilePath = path.join(vscode.workspace.rootPath, "Dockerfile");
-    var dockerFileData = fs.readFileSync(dockerFilePath).toString();
-    console.log(dockerFileData);
-    var dockerFileObj = dockerparse(dockerFileData);
-
-    findContainer(name).then(function(container) {
-        if (container) {
-            vscode.window.showWarningMessage("A container is already running. Do you wish to restart?", "Restart").then(
-                function(msg) {
-                    if (msg == "Restart") {
-                        client().getContainer(container.Id).stop(function(err, data) {
-                            if (err) {
-                                vscode.window.showErrorMessage("Failed to stop container: " + err);
-                                return;
-                            }
-                            vsDockerBuild(function() {
-                                runImageWithNotifications(name, dockerFileObj.expose);
-                            });
-                        });
-                    }
-                });
+function restartAndBuild(name, container, ports, callback, opts) {
+    client().getContainer(container.Id).stop(function(err, data) {
+        if (err) {
+            error("Failed to stop container: " + err);
             return;
         }
         vsDockerBuild(function() {
-            runImageWithNotifications(name, dockerFileObj.expose);
-        });
+            runImageWithNotifications(name, ports, callback, opts);
+        }, opts);
+    });
+}
+
+function vsDockerRun(callback, opts) {
+    var name = findImageName();
+    var dockerFilePath = path.join(vscode.workspace.rootPath, "Dockerfile");
+    var dockerFileData = fs.readFileSync(dockerFilePath).toString();
+    var dockerFileObj = dockerparse(dockerFileData);
+    if (!opts) {
+        opts = {};
+    }
+    findContainer(name).then(function(container) {
+        if (container) {
+            if (opts.autorun) {
+                restartAndBuild(name, container, dockerFileObj.expose, callback, opts);
+            } else {
+                warn("A container is already running. Do you wish to restart?", "Restart").then(
+                    function(msg) {
+                        if (msg == "Restart") {
+                            restartAndBuild(name, container, dockerFileObj.expose, callback, opts);
+                        }
+                    });
+                return;
+            }
+        } else {
+            vsDockerBuild(function() {
+                runImageWithNotifications(name, dockerFileObj.expose, callback, opts);
+            }, opts);
+        }
     });
 };
 
-function runImageWithNotifications(name, ports) {
+function runImageWithNotifications(name, ports, callback, opts) {
     runImage(name, ports).then(function(success, obj) {
         if (success) {
-            vscode.window.showInformationMessage("Container running.");
+            if (!opts.silent) {
+                info("Container running.");
+            }
+            vsDockerLogs(opts);
         } else {
-            vscode.window.showErrorMessage("Failed to run container: " + obj);
+            error("Failed to run container: " + obj);
+        }
+        if (callback) {
+            callback();
         }
     });
 };
@@ -242,7 +323,7 @@ function vsDockerFind() {
     var name = findImageName();
     findContainer(name).then(function(container) {
         if (container) {
-            vscode.window.showInformationMessage("Found container: " + container.Id);
+            info("Found container: " + container.Id);
         }
     })
 };
@@ -254,7 +335,6 @@ function findContainer(name) {
                 var result = null;
                 if (containers != null) {
                     containers.forEach(function (info) {
-                        console.log(info);
                         if (info.Image == name) {
                             result = info;
                         }
@@ -272,9 +352,9 @@ function vsDockerKill() {
         if (container) {
             client().getContainer(container.Id).stop(function(err, data) {
                 if (err) {
-                    vscode.window.showErrorMessage("Failed to delete container: " + err);
+                    error("Failed to delete container: " + err);
                 } else {
-                    vscode.window.showInformationMessage("Container stopped.");
+                    info("Container stopped.");
                 }
             });
         }
@@ -282,14 +362,15 @@ function vsDockerKill() {
 };
 
 function vsDockerPush() {
-    vscode.window.showInformationMessage('Starting image push...');
+    info('Starting image push...');
     var name = findImageName();
     shelljs.exec('docker push ' + name, function(result, stdout, stderr) {
         if (result != 0) {
-            vscode.window.showErrorMessage('Docker push failed: ' + stderr);
+            error('Docker push failed: ' + stderr);
             console.log(stderr);
         } else {
-            vscode.window.showInformationMessage('Image ' + name + ' pushed successfully.');
+            info('Image ' + name + ' pushed successfully.');
+            out("Container Push").append(stdout);
         }
     });
 }
@@ -299,7 +380,7 @@ function vsDockerPushNative() {
     var authconfig = vscode.workspace.getConfiguration().get('vsdocker.authconfig');
     var auth = null;
     if (!authconfig) {
-        vscode.window.showWarningMessage('vsdocker.authconfig setting is undefined, this push will be unauthenticated.');
+        warn('vsdocker.authconfig setting is undefined, this push will be unauthenticated.');
     } else {
         auth = JSON.parse(fs.readFileSync(authconfig));
     }
@@ -315,7 +396,7 @@ function vsDockerPushNative() {
     },
     function(err, output) {
         if (err) {
-            vscode.window.showErrorMessage('Failed to push image: ' + err);
+            error('Failed to push image: ' + err);
             return;
         }
         var status = true;
@@ -323,15 +404,94 @@ function vsDockerPushNative() {
             obj = JSON.parse(chunk);
             if (obj.errorDetail) {
                 status = false;
-                vscode.window.showErrorMessage('Image push failed: ' + obj.errorDetail.message);
+                error('Image push failed: ' + obj.errorDetail.message);
             }
         });
         // TODO: handle 'errorDetail messages here?'
         output.on('end', function() {
             if (status) {
-                vscode.window.showInformationMessage('Successfully pushed image ' + name);
+                info('Successfully pushed image ' + name);
             }
         });
     },
     auth);
+}
+
+var outChannels = {};
+function out(name) {
+    if (outChannels[name] == null) {
+        outChannels[name] = vscode.window.createOutputChannel(name);
+    }
+    return outChannels[name];
+}
+
+function vsDockerLogs(opts) {
+    var channelName = "Container Logs";
+    out(channelName).clear();
+    if (!opts.silent) {
+        out(channelName).show();
+    }
+    // create a single stream for stdin and stdout
+    var logStream = new stream.PassThrough();
+    logStream.on('data', function(chunk){
+        out(channelName).append(chunk.toString());
+    });
+
+    var name = findImageName();
+    findContainer(name).then(function(cObj) {
+        if (cObj == null) {
+            // We should list all containers (even not running) and logs any stopped containers
+            error("Couldn't find a container!");
+        }
+        var container = client().getContainer(cObj.Id);
+        container.logs({
+            follow: true,
+            stdout: true,
+            stderr: true
+        }, function(err, stream){
+            if(err) {
+                out(channelName).append(err.message);
+                return;
+            }
+            container.modem.demuxStream(stream, logStream, logStream);
+            stream.on('end', function(){
+                logStream.end('!stop!');
+            });
+        });
+    });
+}
+
+function vsDockerExec() {
+    withContainer(execInternal);
+}
+
+function withContainer(callback) {
+    var name = findImageName();
+    findContainer(name).then(function(container) {
+        if (!container) {
+            warn("A container is not currently running. Do you wish to start?", "Start").then(
+                function(msg) {
+                    if (msg == "Start") {
+                        vsDockerRun(function() {
+                            findContainer(name).then(function(container) {
+                                callback(container.Id);
+                            })
+                        });
+                    }
+                });
+        } else {
+            callback(container.Id);
+        }
+    });
+}
+
+function execInternal(id) {
+    vscode.window.showInputBox({
+        placeHolder: "Please provide a command",
+        prompt: "Exec"
+    }).then(function(cmd) {
+        var term = vscode.window.createTerminal();
+        term.sendText("docker exec -it " + id + " " + cmd);
+        term.show(false);
+    });
 }
